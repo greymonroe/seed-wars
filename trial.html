@@ -98,7 +98,7 @@ function trialView(r) {
     if (!Array.isArray(draft) || draft.length !== T.NHYB * 4) draft = Array(T.NHYB * 4).fill(0);
     try { localStorage.setItem(`tr:${gameId}:${r}`, JSON.stringify(draft)); } catch (e) {}
     const used = draft.reduce((a, b) => a + b, 0);
-    ui.innerHTML = `<div class="card"><b>Round ${r}: plant your trials</b><div class="muted small">Tap a square to add a plot there (tap again for more). ${T.PLOTS} plots per round. 👀 The big screen shows where rival companies are planting.</div>
+    ui.innerHTML = `<div class="card"><b>Round ${r}: plant your trials</b><div class="muted small">Tap a square to add a plot there (tap again for more). ${T.PLOTS} plots per round. Rivals plant at the same time. You'll see how crowded each region was when farmers choose.</div>
       <table class="tg">${head()}${cat.map((h, i) => `<tr><td class="hy">${h.code}</td>${T.REGIONS.map((R, ri) => {
         const n = draft[i * 4 + ri]; return `<td class="c ${n ? "on" : ""}" data-c="${i * 4 + ri}">${n ? "🌱".repeat(Math.min(n, 3)) + (n > 3 ? n : "") : ""}</td>`; }).join("")}</tr>`).join("")}</table>
       <div class="row2" style="margin-top:8px"><span class="left">${T.PLOTS - used} plots left</span><button class="ghost big" id="clr" style="margin:0">Clear</button></div>
@@ -152,7 +152,7 @@ function resultView(st, sd) {
   if (!R) { ui.innerHTML = `<div class="card">Round ${r}: farmers are choosing…</div>`; return; }
   const mine = R.offers.find((o) => o.g == myG), rev = R.revenue[myG] || 0;
   let h = `<div class="card big-num"><div class="muted">Round ${r}: ${st.phase === "market" ? "farmers chose" : "harvest"}</div><div class="num">$${rev.toFixed(1)}M</div>
-    <div>${rev.toFixed(0)} of 80 farmers bought ${mine ? `<b>${esc(mine.name)}</b>` : "nothing from you"} · rank <b>${ranks.indexOf(String(myG)) + 1}</b> of ${ranks.length}</div></div>`;
+    <div>${mine ? `${rev.toFixed(0)} of 80 farmers bought <b>${esc(mine.name)}</b>` : "You didn't release a hybrid this round"} · rank <b>${ranks.indexOf(String(myG)) + 1}</b> of ${ranks.length}</div></div>`;
   if (mine) {
     h += `<div class="card"><b>Promised vs real</b><div class="pr muted small"><span>Region</span><span>Your data</span><span>${st.phase === "market" ? "Real yield" : "Real yield"}</span></div>` +
       T.REGIONS.map((Rg, ri) => {
@@ -167,8 +167,22 @@ function resultView(st, sd) {
         : `<div class="card"><span class="good">✓ No refunds: your hybrid delivered what your data promised.</span></div>`;
     }
   }
-  h += st.phase === "over" ? `<div class="card"><b>Game over!</b> Final rank ${ranks.indexOf(String(myG)) + 1}. Look at the big screen.</div>` : `<div class="muted">Look at the big screen.</div>`;
+  h += st.phase === "over" ? revealCatalog(ranks) : `<div class="muted">Look at the big screen.</div>`;
   ui.innerHTML = h;
+}
+
+// the end-of-game reveal: every hybrid's real yield everywhere; outlined = you tested it there; 🚀 = you released it
+function revealCatalog(ranks) {
+  const F = T.finale(gameId, S), cat = T.catalog(gameId, myG), tested = F.tested[myG] || new Set(), rel = F.released[myG] || new Set();
+  let best = null; cat.forEach((hy, h) => T.REGIONS.forEach((R, ri) => { const y = T.trueYield(hy, R); if (!best || y > best.y) best = { h, ri, y }; }));
+  const missed = !tested.has(best.h * 4 + best.ri);
+  return `<div class="card big-num"><div class="muted">Final rank</div><div class="num">${ranks.indexOf(String(myG)) + 1} of ${ranks.length}</div></div>
+    <div class="card"><b>🔓 Your catalog revealed</b><div class="muted small">The real yield of every hybrid in every region. <b>Outlined</b> = you tested it there. 🚀 = you released it.</div>
+    <table class="tg">${head()}${cat.map((hy, h) => `<tr><td class="hy">${rel.has(h) ? "🚀 " : ""}${hy.code}</td>${T.REGIONS.map((R, ri) => {
+      const y = T.trueYield(hy, R), t = tested.has(h * 4 + ri);
+      return `<td class="r" style="background:${ycol(y)};${t ? "outline:3px solid #222;outline-offset:-3px;" : ""}"><b>${y.toFixed(1)}</b></td>`; }).join("")}</tr>`).join("")}</table>
+    <div style="margin-top:8px">${missed ? `💎 Your best hybrid was <b>${cat[best.h].code}</b> in ${T.REGIONS[best.ri].name} (${best.y.toFixed(1)} t/ha), and <b>you never tested it there.</b>`
+      : `✅ You found your best hybrid-region combo: <b>${cat[best.h].code}</b> in ${T.REGIONS[best.ri].name} (${best.y.toFixed(1)} t/ha).`}</div></div>`;
 }
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }

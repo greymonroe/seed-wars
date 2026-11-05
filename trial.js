@@ -117,3 +117,39 @@ export function standings(gid, snap) {
   }
   return { state: st, teams, rounds, total };
 }
+
+// End-of-game reveal: what was really in everyone's catalog, and what the class found.
+export function finale(gid, snap) {
+  const sd = standings(gid, snap), teams = Object.entries(snap.teams || {}).filter(([, t]) => t).map(([g]) => g);
+  const tested = {}, released = {}, plotsAll = [];
+  teams.forEach((g) => { tested[g] = new Set(); released[g] = new Set(); });
+  for (let r = 1; r <= ROUNDS; r++) {
+    teams.forEach((g) => {
+      const p = snap.plots?.[r]?.[g]; const v = snap.release?.[r]?.[g];
+      if (v && v.h != null) released[g].add(v.h);
+      if (!p) return;
+      const cat = catalog(gid, g), res = trialResults(gid, g, r, p.alloc);
+      res.forEach((row, h) => row.forEach((c, ri) => { if (c.n) tested[g].add(h * 4 + ri);
+        c.ys.forEach((y) => plotsAll.push({ g, h, ri, r, y, truth: trueYield(cat[h], REGIONS[ri]) })); }));
+    });
+  }
+  // hidden gem: the best true yield anywhere that its owner never tested
+  let gem = null;
+  teams.filter((g) => tested[g].size).forEach((g) => catalog(gid, g).forEach((hy, h) => REGIONS.forEach((R, ri) => {
+    const y = trueYield(hy, R);
+    if (!tested[g].has(h * 4 + ri) && (!gem || y > gem.y)) gem = { g, h, ri, y, code: hy.code };
+  })));
+  // luckiest single plot: biggest gap between a plot and the truth
+  const lucky = plotsAll.reduce((b, p) => (!b || p.y - p.truth > b.y - b.truth ? p : b), null);
+  if (lucky) lucky.code = catalog(gid, lucky.g)[lucky.h].code;
+  // refunds and crowding by region (all rounds)
+  const refundTot = {}, regionMoney = REGIONS.map(() => 0), regionCompetitors = REGIONS.map(() => new Set());
+  Object.values(sd.rounds).forEach((R) => {
+    Object.entries(R.refund || {}).forEach(([g, v]) => (refundTot[g] = (refundTot[g] || 0) + v));
+    R.regions.forEach(({ shares }, ri) => Object.entries(shares).forEach(([g, s]) => {
+      if (s > 0.02) { regionCompetitors[ri].add(g); regionMoney[ri] += REGIONS[ri].farmers * s * MONEY; } }));
+  });
+  const bigRefund = Object.entries(refundTot).sort((a, b) => b[1] - a[1])[0];
+  return { sd, tested, released, gem, lucky, bigRefund: bigRefund && bigRefund[1] > 0.05 ? { g: bigRefund[0], v: bigRefund[1] } : null,
+    crowd: REGIONS.map((R, ri) => ({ R, companies: regionCompetitors[ri].size, money: regionMoney[ri] })) };
+}

@@ -86,16 +86,15 @@ function main(st, sd) {
   const r = st.round, R = sd.rounds[r];
   let left;
   if (st.phase === "trial") {
-    const intel = T.REGIONS.map(() => ({ plots: 0, cos: new Set() }));
-    Object.entries(S.plots?.[r] || {}).forEach(([g, p]) => { if (!p) return; for (let h = 0; h < T.NHYB; h++) for (let ri = 0; ri < 4; ri++) {
-      const n = T.allocGet(p.alloc, h, ri); if (n) { intel[ri].plots += n; intel[ri].cos.add(g); } } });
+    const nT = Object.values(S.teams || {}).filter(Boolean).length;
+    const nP = Object.values(S.plots?.[r] || {}).filter(Boolean).length, nR = Object.values(S.release?.[r] || {}).filter(Boolean).length;
+    const prev = r > 1 ? sd.rounds[r - 1] : null;
     left = `<div class="regions">${T.REGIONS.map((Rg, ri) => `<div class="reg"><h3><span class="ic">${Rg.icon}</span> ${Rg.name} <span class="muted" style="font-size:16px">· ${Rg.farmers} farmers</span></h3>
       <div class="farmers">${Array(Rg.farmers).fill('<div class="fm" style="background:#bdbdbd"></div>').join("")}</div>
-      <div style="font-size:22px;margin-top:4px">🌱 <b>${intel[ri].plots}</b> trial plots · <b>${intel[ri].cos.size}</b> compan${intel[ri].cos.size === 1 ? "y" : "ies"} testing here</div>
-      <div style="display:flex;gap:4px;margin-top:4px">${[...intel[ri].cos].map((g) => `<span class="sw" style="background:${T.COLORS[g - 1]}"></span>`).join("")}</div></div>`).join("")}</div>
-      <div class="chips">${Object.entries(S.teams || {}).filter(([, t]) => t).map(([g]) => { const p = S.plots?.[r]?.[g], rl = S.release?.[r]?.[g];
-        return `<div class="chip" style="background:${T.COLORS[g - 1]};opacity:${rl ? 1 : p ? 0.6 : 0.2}">${g}${p ? " 🌱" : ""}${rl ? " 📣" : ""}</div>`; }).join("")}</div>
-      <div class="muted" style="margin-top:6px">🌱 = trials planted · 📣 = hybrid released</div>`;
+      ${prev ? `<div style="font-size:20px;margin-top:4px">Last round: <b>${Object.values(prev.regions[ri].shares).filter((x) => x > 0.02).length}</b> companies sold here</div>` : `<div class="muted">Where will the other companies go?</div>`}</div>`).join("")}</div>
+      <div style="font-size:30px;margin-top:14px">🌱 <b>${nP}</b> of ${nT} companies have planted · 📣 <b>${nR}</b> have released</div>
+      <div class="muted" style="margin-top:4px">Everyone plants at the same time. Nobody sees anyone's regions until farmers choose.</div>`;
+
   } else if (R) {
     const truth = st.phase !== "market";
     left = `<div class="regions">${R.regions.map(({ R: Rg, cand, shares }, ri) => {
@@ -111,7 +110,22 @@ function main(st, sd) {
   const lb = rows.map(([g, v], k) => `<div class="row"><span style="width:28px">${st.phase === "over" && k < 3 ? ["🥇", "🥈", "🥉"][k] : k + 1}</span>
     <span class="sw" style="background:${T.COLORS[g - 1]}"></span><span class="nm">${esc(S.teams?.[g]?.name || g)}</span>
     <b style="margin-left:auto">$${v.toFixed(1)}M</b>${R && R.showTruth && (R.refund[g] || 0) > 0.05 ? ` <span class="bad" style="font-size:14px">💸−${R.refund[g].toFixed(1)}</span>` : ""}</div>`).join("");
+  if (st.phase === "over") left = finaleView();
   ui.innerHTML = `<div class="scMain"><div>${left}</div><div class="lb"><div class="muted" style="font-size:16px;margin-bottom:6px">Seed sales (after refunds)</div>${lb}</div></div>`;
+}
+
+function finaleView() {
+  const F = T.finale(gameId, S), nm = (g) => esc(S.teams?.[g]?.name || g), sw = (g) => `<span class="sw" style="background:${T.COLORS[g - 1]};display:inline-block;vertical-align:middle"></span>`;
+  const win = Object.entries(F.sd.total).sort((a, b) => b[1] - a[1])[0];
+  const card = (icon, title, body) => `<div class="reg" style="font-size:21px;line-height:1.35"><h3>${icon} ${title}</h3>${body}</div>`;
+  const cards = [
+    win ? card("🏆", "Winner", `${sw(win[0])} <b>${nm(win[0])}</b>: $${win[1].toFixed(1)}M. Tested ${F.tested[win[0]].size} hybrid-region combos and released ${[...F.released[win[0]]].map((h) => T.catalog(gameId, win[0])[h].code).join(", ")}.`) : "",
+    F.gem ? card("💎", "Hidden gem", `${sw(F.gem.g)} <b>${nm(F.gem.g)}</b> owned <b>${F.gem.code}</b>, which yields <b>${F.gem.y.toFixed(1)} t/ha</b> in ${T.REGIONS[F.gem.ri].name}. They never planted it there.`) : "",
+    F.lucky ? card("🎲", "Luckiest plot", `${sw(F.lucky.g)} <b>${nm(F.lucky.g)}</b>: one plot of ${F.lucky.code} in ${T.REGIONS[F.lucky.ri].name} yielded <b>${F.lucky.y.toFixed(1)}</b>. Its real yield there: <b>${F.lucky.truth.toFixed(1)}</b>.`) : "",
+    F.bigRefund ? card("💸", "Biggest refunds", `${sw(F.bigRefund.g)} <b>${nm(F.bigRefund.g)}</b> refunded <b>$${F.bigRefund.v.toFixed(1)}M</b> to farmers who believed their data.`) : card("💸", "Refunds", "Nobody had to refund farmers. Solid data all round!"),
+    card("🧭", "Crowding", `<table style="width:100%;font-size:19px">${F.crowd.map((c) => `<tr><td>${c.R.icon} ${c.R.name}</td><td>${c.companies} compan${c.companies === 1 ? "y" : "ies"} sold here</td><td><b>$${(c.companies ? c.money / c.companies : 0).toFixed(1)}M</b> each</td></tr>`).join("")}</table>`),
+  ];
+  return `<div class="regions">${cards.join("")}</div><div class="muted" style="font-size:18px;margin-top:10px">Each group's phone now shows its whole catalog: the real yield of every hybrid in every region.</div>`;
 }
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
