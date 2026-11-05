@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Seed Wars</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="phone">
+<div class="wrap">
+  <header id="hdr"><h1>🌽 Seed Wars</h1></header>
+  <main id="ui"><p class="muted">Connecting…</p></main>
+</div>
+<div id="modal" class="modal hide"></div>
+<script type="module">
+import { db, base, gameId, ready, plantSVG, genomeSVG, heatColor } from "./app.js";
+import { ref, onValue, set, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import * as G from "./game.js";
+
+const ui = document.getElementById("ui"), hdr = document.getElementById("hdr"), modal = document.getElementById("modal");
+const LS = (k) => `seedwars:${gameId}:${k}`;
+const lsGet = (k, d) => { try { const v = localStorage.getItem(LS(k)); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(LS(k), JSON.stringify(v)); } catch (e) {} };
+const NAMES = ["Heatwave", "Sunburst", "Dust Devil", "Golden", "Mirage", "Firecracker", "Sahara", "Thunder", "Mesa",
+  "Cornado", "Kernel Sanders", "Pop Star", "Ear Force One", "Maize Runner", "Husk Rider", "Stalk Market", "Cob Father"];
+
+let user = null, S = null, myG = null, lab = null, timerInt = null, renderedKey = "";
+
+(async () => {
+  user = await ready;
+  if (!user) { ui.innerHTML = '<p class="err">Could not connect. Reload the page.</p>'; return; }
+  onValue(ref(db, base), (snap) => { S = snap.val() || {}; render(); });
+})();
+
+function teamOf(uid) { return Object.entries(S.teams || {}).find(([, t]) => t.uid === uid)?.[0]; }
+
+function render() {
+  myG = teamOf(user.uid);
+  const st = S.state || { phase: "lobby", round: 0 };
+  header(st);
+  if (!myG) return joinView();
+  const key = `${st.phase}:${st.round}:${myG}`;
+  if (st.phase === "breed") { if (key !== renderedKey) { renderedKey = key; labView(st.round); } else labRefresh(); return; }
+  renderedKey = key;
+  if (st.phase === "harvest" || st.phase === "over") return harvestView(st);
+  ui.innerHTML = `<div class="card">You're <b>${esc(S.teams[myG].name)}</b>. Waiting for the first breeding season to start…</div>` + rulesCard();
+}
+
+function header(st) {
+  const s = G.standings(S), t = myG && S.teams[myG];
+  clearInterval(timerInt);
+  let right = "";
+  if (t) right = `<span class="money">$${(s.total[myG] || 0).toFixed(1)}M</span>`;
+  hdr.innerHTML = `<div class="hrow"><h1>🌽 Seed Wars</h1>${right}</div>` +
+    (t ? `<div class="team"><span class="sw" style="background:${G.COLORS[myG - 1]}"></span>${esc(t.name)}` +
+      `<span class="muted"> · ${st.phase === "lobby" ? "lobby" : `season ${st.round} of ${G.ROUNDS}`}</span><span id="timer" class="timer"></span></div>` : "");
+  if (st.phase === "breed" && st.endsAt) {
+    const tick = () => { const el = document.getElementById("timer"); if (!el) return;
+      const s2 = Math.max(0, Math.round((st.endsAt - Date.now()) / 1000)); el.textContent = `⏱ ${Math.floor(s2 / 60)}:${String(s2 % 60).padStart(2, "0")}`; };
+    tick(); timerInt = setInterval(tick, 1000);
+  }
+}
+
+function rulesCard() {
+  return `<div class="card rules"><b>How it works</b><ol>
+  <li>Each season you <b>cross</b> two parent plants and get 6 offspring.</li>
+  <li><b>Release</b> one to farmers, and <b>keep</b> two as next season's parents.</li>
+  <li>Farmers in each county buy whichever seed yields best in their climate.</li>
+  <li>The climate warms 1°C every season. Your released seed is grown <b>next</b> summer.</li>
+  <li>Stuck? The <b>gene bank</b> has landraces from hot places.</li></ol></div>`;
+}
+
+// ---- join ---------------------------------------------------------------------
+function joinView() {
+  const taken = S.teams || {};
+  ui.innerHTML = `<div class="card"><b>Your final project group number</b><div class="muted">One phone per group. The first phone to tap a number runs that company.</div></div>
+    <div class="grid">${Array.from({ length: 17 }, (_, i) => i + 1).map((g) =>
+      `<button class="gbtn" data-g="${g}" style="background:${G.COLORS[g - 1]}" ${taken[g] ? "disabled" : ""}>${g}</button>`).join("")}</div>
+    <div id="nameBox" class="card hide"><b>Name your seed company</b>
+      <input id="cname" maxlength="24" placeholder="e.g. Kernel Panic Inc.">
+      <button class="big" id="claim">Start my company</button><div id="msg" class="err"></div></div>` + rulesCard();
+  let pick = null;
+  ui.querySelectorAll(".gbtn").forEach((b) => b.onclick = () => {
+    pick = +b.dataset.g; ui.querySelectorAll(".gbtn").forEach((x) => x.classList.toggle("sel", x === b));
+    document.getElementById("nameBox").classList.remove("hide"); document.getElementById("cname").focus();
+  });
+  ui.querySelector("#claim").onclick = async () => {
+    const name = document.getElementById("cname").value.trim() || `Company ${pick}`;
+    try { await set(ref(db, `${base}/teams/${pick}`), { name: name.slice(0, 24), uid: user.uid, ts: serverTimestamp() }); }
+    catch (e) { document.getElementById("msg").textContent = "That group was just taken. Pick your own group number."; }
+  };
+}
+
+// ---- lab (breeding season) --------------------------------------------------------
+function parentsFor(r) {
+  for (let k = r - 1; k >= 1; k--) { const mv = S.moves?.[k]?.[myG]; if (mv?.keep) return mv.keep.slice(); }
+  return G.ELITE.slice();
+}
+
+function labView(r) {
+  const saved = lsGet(`lab${r}`, null);
+  lab = saved || { r, parents: parentsFor(r), crossed: false, kids: [], release: null, keep: [], name: "", landrace: false };
+  lab.r = r; labDraw();
+}
+function save() { lsSet(`lab${lab.r}`, lab); }
+
+function plantCard(geno, opts = {}) {
+  const st = G.topt(geno), pot = G.potential(geno);
+  return `<div class="pcard ${opts.cls || ""}" ${opts.data || ""}>
+    ${opts.badge ? `<div class="badge">${opts.badge}</div>` : ""}
+    <div class="pimg">${plantSVG(geno, opts.small ? 62 : 86)}</div>
+    <div class="pstats"><div><span class="dot" style="background:${heatColor(st)}"></span>Fits <b>${st.toFixed(1)}°C</b></div>
+    <div>Yield <b>${pot.toFixed(1)}</b> t/ha</div>${opts.label ? `<div class="muted small">${opts.label}</div>` : ""}</div>
+    <div class="gen">${genomeSVG(geno, 140)}</div>
+    ${opts.bars ? marketBars(geno, lab.r) : ""}</div>`;
+}
+
+// how this plant would yield in each county next summer (when this season's releases are grown)
+function marketBars(geno, r) {
+  const T = G.climate(r), W = 140, cw = W / 12;
+  let s = `<svg viewBox="0 0 ${W} 34" width="${W}" height="34">`;
+  T.forEach((t, c) => {
+    const y = G.yieldIn(geno, t), h = y / 12 * 26;
+    s += `<rect x="${c * cw + 1}" y="${28 - h}" width="${cw - 2}" height="${h}" fill="${heatColor(t)}"/>`;
+  });
+  return s + `<text x="0" y="34" font-size="6" fill="#888">cool</text><text x="${W}" y="34" font-size="6" fill="#888" text-anchor="end">hot</text></svg>`;
+}
+
+function climateStrip(r) {
+  const T = G.climate(r);
+  return `<div class="strip">${T.map((t, c) => `<div class="cty" style="background:${heatColor(t)}"><b>${t}°</b><span>${"•".repeat(Math.ceil(G.FARMERS[c] / 2))}</span></div>`).join("")}</div>
+    <div class="muted small">Next summer's counties (when this season's seed is grown) · dots = farmers</div>`;
+}
+
+function labDraw() {
+  const r = lab.r, mv = S.moves?.[r]?.[myG];
+  let h = `<div class="card"><b>Season ${r}: breeding</b>${climateStrip(r)}</div>`;
+  if (!lab.crossed) {
+    h += `<h2>Your parents</h2><div class="pair">${lab.parents.map((p, i) => plantCard(p, { label: i ? "Parent B" : "Parent A" })).join('<div class="x">×</div>')}</div>
+      <div class="legend">${genomeSVG("1111111111" + "11111111", 140)}<span><b style="color:#ef6c00">heat genes</b> · <b style="color:#2e7d32">yield genes</b> (grey = missing)</span></div>
+      <button class="ghost big" id="bank">🏦 Gene bank: swap in a landrace</button>
+      <button class="big" id="cross">Cross them! 🌸</button>`;
+    ui.innerHTML = h;
+    document.getElementById("bank").onclick = bankModal;
+    document.getElementById("cross").onclick = doCross;
+    return;
+  }
+  const spread = Math.max(...lab.kids.map(G.topt)) - Math.min(...lab.kids.map(G.topt));
+  const mid = G.climate(r)[6];
+  if (spread < 0.5 && Math.max(...lab.kids.map(G.topt)) < mid - 1)
+    h += `<div class="card nudge">🤔 All your offspring fit about ${G.topt(lab.kids[0]).toFixed(0)}°C, and they're all the same. Farmers are moving hotter (the middle county will be ${mid}°C). Your parents don't carry the heat genes. Next season, think about the <b>gene bank</b>.</div>`;
+  h += `<h2>Your 6 offspring</h2><div class="muted small">Tap a plant: <b>Release</b> one to farmers, <b>Keep</b> two as next season's parents. Bars = yield in each county next summer.</div>
+    <div class="kids">${lab.kids.map((k, i) => plantCard(k, {
+      cls: (lab.release === i ? "rel " : "") + (lab.keep.includes(i) ? "keep" : ""), data: `data-i="${i}"`, bars: true, small: true,
+      badge: (lab.release === i ? "🚀 release " : "") + (lab.keep.includes(i) ? "🌱 keep" : "") })).join("")}</div>
+    <div class="card"><label>Variety name</label><input id="vname" maxlength="24" value="${esc(lab.name)}" placeholder="Name your variety">
+    <button class="big" id="send" ${lab.release == null || lab.keep.length !== 2 ? "disabled" : ""}>Send to market 🚚</button>
+    <div id="sent" class="ok"></div></div>`;
+  ui.innerHTML = h;
+  ui.querySelectorAll(".kids .pcard").forEach((el) => el.onclick = () => kidMenu(+el.dataset.i));
+  const vn = document.getElementById("vname"); vn.oninput = () => { lab.name = vn.value; save(); };
+  document.getElementById("send").onclick = send;
+  labRefresh();
+}
+
+function labRefresh() {
+  const el = document.getElementById("sent"); if (!el) return;
+  const mv = S.moves?.[lab.r]?.[myG];
+  el.textContent = mv ? `On the market: “${mv.release.name}”. You can change it until the season ends.` : "";
+}
+
+function bankModal() {
+  modal.innerHTML = `<div class="sheet"><h2>🏦 Gene bank</h2><div class="muted small">Landraces: traditional varieties farmers grew for centuries in hot, dry places. Heat genes galore, low yield. Swap one in for a parent.</div>
+    ${G.LANDRACES.map((L, i) => `<div class="bankrow">${plantCard(L.geno, { label: `${L.name} · ${L.from}` })}
+      <div class="bankbtns"><button data-l="${i}" data-p="0">Replace A</button><button data-l="${i}" data-p="1">Replace B</button></div></div>`).join("")}
+    <button class="ghost big" id="close">Never mind</button></div>`;
+  modal.classList.remove("hide");
+  modal.querySelectorAll("button[data-l]").forEach((b) => b.onclick = () => {
+    lab.parents[+b.dataset.p] = G.LANDRACES[+b.dataset.l].geno; lab.landrace = true; save(); modal.classList.add("hide"); labDraw();
+  });
+  document.getElementById("close").onclick = () => modal.classList.add("hide");
+}
+
+function doCross() {
+  lab.kids = G.cross(lab.parents[0], lab.parents[1], `${gameId}:${myG}:${lab.r}:${lab.parents.join(",")}`);
+  lab.crossed = true; lab.name = NAMES[Math.floor(Math.random() * NAMES.length)] + " " + (100 + Math.floor(Math.random() * 900));
+  save();
+  ui.innerHTML = `<div class="crossing"><div class="pair">${plantSVG(lab.parents[0], 110)}<span class="pollen">🌼✨🌼</span>${plantSVG(lab.parents[1], 110)}</div><p>Crossing… growing seedlings…</p></div>`;
+  setTimeout(labDraw, 1600);
+}
+
+function kidMenu(i) {
+  modal.innerHTML = `<div class="sheet">${plantCard(lab.kids[i], { bars: true })}
+    <button class="big" id="mrel">${lab.release === i ? "✓ Releasing this one" : "🚀 Release to farmers"}</button>
+    <button class="big alt" id="mkeep">${lab.keep.includes(i) ? "✓ Keeping (tap to unkeep)" : "🌱 Keep as a parent"}</button>
+    <button class="ghost big" id="mclose">Close</button></div>`;
+  modal.classList.remove("hide");
+  document.getElementById("mrel").onclick = () => { lab.release = i; save(); modal.classList.add("hide"); labDraw(); };
+  document.getElementById("mkeep").onclick = () => {
+    if (lab.keep.includes(i)) lab.keep = lab.keep.filter((x) => x !== i); else { lab.keep.push(i); if (lab.keep.length > 2) lab.keep.shift(); }
+    save(); modal.classList.add("hide"); labDraw();
+  };
+  document.getElementById("mclose").onclick = () => modal.classList.add("hide");
+}
+
+async function send() {
+  const name = (document.getElementById("vname").value.trim() || "Unnamed").slice(0, 24);
+  try {
+    await set(ref(db, `${base}/moves/${lab.r}/${myG}`), {
+      release: { name, geno: lab.kids[lab.release] }, keep: lab.keep.map((i) => lab.kids[i]), landrace: !!lab.landrace, ts: serverTimestamp() });
+  } catch (e) { document.getElementById("sent").textContent = "The season is over. Wait for the next one."; }
+}
+
+// ---- harvest -------------------------------------------------------------------
+function harvestView(st) {
+  const s = G.standings(S), r = st.round, pr = s.perRound[r];
+  const ranks = Object.entries(s.total).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
+  const mv = S.moves?.[r]?.[myG];
+  const rev = pr?.revenue[myG] || 0;
+  const mine = s.market.filter((v) => v.g == myG);
+  let h = `<div class="card big-num"><div class="muted">Season ${r} harvest</div><div class="num">$${rev.toFixed(1)}M</div>
+    <div>${rev.toFixed(0)} of 84 farmers bought your seed · rank <b>${ranks.indexOf(String(myG)) + 1}</b> of ${ranks.length}</div></div>`;
+  if (pr) {
+    h += `<div class="card"><b>Where you sold</b><div class="strip">${pr.counties.map((c) => {
+      const sh = c.byTeam[myG] || 0;
+      return `<div class="cty" style="background:${heatColor(c.T)}"><b>${c.T}°</b><span>${Math.round(sh * 100)}%</span></div>`; }).join("")}</div></div>`;
+  }
+  h += `<div class="card"><b>Your varieties on the market</b>${mine.length ? mine.map((v) => `<div class="vrow">${plantSVG(v.geno, 40)}<div><b>${esc(v.name)}</b><div class="muted small">season ${v.r} · fits ${G.topt(v.geno).toFixed(1)}°C · yield ${G.potential(v.geno).toFixed(1)}</div></div></div>`).join("") : '<div class="muted">None yet.</div>'}</div>`;
+  h += st.phase === "over" ? `<div class="card"><b>Game over!</b> Final rank ${ranks.indexOf(String(myG)) + 1} of ${ranks.length}. Look at the big screen.</div>`
+    : `<div class="muted">Next season starts soon. Look at the big screen: who's winning the hot counties?</div>`;
+  ui.innerHTML = h;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+</script>
+</body></html>

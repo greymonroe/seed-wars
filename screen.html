@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seed Wars · screen</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="screen">
+<div class="sc">
+  <div class="scTop"><h1>🌽 Seed Wars</h1><div class="phase" id="phase"></div><div class="clock" id="clock"></div>
+    <div class="ctl" id="ctl"></div></div>
+  <div id="ui"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@04f46c6a/qrcode.min.js"></script>
+<script type="module">
+import { db, base, gameId, ready, amHost, signInAsHost, plantSVG, heatColor } from "./app.js";
+import { ref, onValue, set, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import * as G from "./game.js";
+
+const ui = document.getElementById("ui"), ctl = document.getElementById("ctl");
+const phoneURL = location.origin + location.pathname.replace(/screen\.html$/, "") + "?g=" + gameId;
+const SEASON = 180;   // seconds per breeding season (advisory timer)
+let S = {}, host = false, clockInt = null, lastKey = "";
+
+(async () => {
+  await ready; host = await amHost();
+  onValue(ref(db, base), (snap) => { S = snap.val() || {}; render(); });
+})();
+
+const setState = (st) => set(ref(db, `${base}/state`), st);
+
+function controls(st) {
+  if (!host) { ctl.innerHTML = `<button class="ghost" id="si">Sign in as host</button>`;
+    document.getElementById("si").onclick = async () => { host = await signInAsHost(); if (!host) alert("This Google account isn't the live-poll host."); render(); }; return; }
+  let b = "";
+  if (st.phase === "lobby") b = `<button id="go">Start season 1</button>`;
+  else if (st.phase === "breed") b = `<button id="go">Harvest! 🌽</button>`;
+  else if (st.phase === "harvest" && st.round < G.ROUNDS) b = `<button id="go">Start season ${st.round + 1}</button>`;
+  else if (st.phase === "harvest") b = `<button id="go">Final results 🏆</button>`;
+  ctl.innerHTML = b + `<button class="ghost" id="reset">Reset</button>`;
+  const go = document.getElementById("go");
+  if (go) go.onclick = () => {
+    if (st.phase === "lobby") setState({ phase: "breed", round: 1, rkey: "1", endsAt: Date.now() + SEASON * 1000 });
+    else if (st.phase === "breed") setState({ phase: "harvest", round: st.round, rkey: String(st.round) });
+    else if (st.round < G.ROUNDS) setState({ phase: "breed", round: st.round + 1, rkey: String(st.round + 1), endsAt: Date.now() + SEASON * 1000 });
+    else setState({ phase: "over", round: st.round, rkey: String(st.round) });
+  };
+  document.getElementById("reset").onclick = () => { if (confirm("Wipe this game (companies, varieties, money)?")) remove(ref(db, base)); };
+}
+
+function render() {
+  const st = S.state || { phase: "lobby", round: 0 };
+  controls(st);
+  clearInterval(clockInt); document.getElementById("clock").textContent = "";
+  const nTeams = Object.keys(S.teams || {}).length, nMoves = Object.keys(S.moves?.[st.round] || {}).length;
+  const ph = document.getElementById("phase");
+  if (st.phase === "lobby") { ph.textContent = `${nTeams} companies`; return lobby(); }
+  if (st.phase === "breed") {
+    ph.textContent = `Season ${st.round} of ${G.ROUNDS} · breeding · ${nMoves}/${nTeams} sent to market`;
+    const tick = () => { const s = Math.max(0, Math.round((st.endsAt - Date.now()) / 1000)); document.getElementById("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    tick(); clockInt = setInterval(tick, 1000);
+  } else ph.textContent = st.phase === "over" ? "Final results" : `Season ${st.round} of ${G.ROUNDS} · harvest`;
+  board(st);
+}
+
+function lobby() {
+  ui.innerHTML = `<div class="lobby"><div class="qr" id="qr"></div><div style="font-size:28px;line-height:1.4">
+    <b>Your group is a seed company.</b><br>One phone per group: scan, tap your group number, name your company.
+    <div class="muted" style="font-size:18px;margin-top:8px">${phoneURL.replace(/^https?:\/\//, "")}</div>
+    <div class="chips">${Object.entries(S.teams || {}).map(([g, t]) => `<div class="chip" style="background:${G.COLORS[g - 1]}">${g} · ${esc(t.name)}</div>`).join("")}</div></div></div>`;
+  const s = Math.round(Math.min(innerHeight * 0.6, innerWidth * 0.32));
+  new QRCode(document.getElementById("qr"), { text: phoneURL, width: s, height: s, correctLevel: QRCode.CorrectLevel.M });
+}
+
+// the farm map: 12 counties (cool -> hot), farmer icons coloured by whose seed they bought
+function farm(st, s) {
+  const W = 1100, cw = W / 12, H = 340, top = 70;
+  const showRound = st.phase === "breed" ? st.round - 1 : st.round;
+  const pr = s.perRound[showRound];
+  const T = st.phase === "breed" ? G.climate(st.round) : G.climate(Math.max(1, st.round));
+  let h = `<svg class="farm" viewBox="0 0 ${W} ${H}" width="100%">`;
+  h += `<text x="4" y="22" font-size="22" fill="#1F78B4">◀ cool north</text><text x="${W - 4}" y="22" font-size="22" fill="#E65100" text-anchor="end">hot south ▶</text>`;
+  T.forEach((t, c) => {
+    const x = c * cw;
+    h += `<rect x="${x + 4}" y="${top - 36}" width="${cw - 8}" height="32" rx="7" fill="${heatColor(t)}"/>`;
+    h += `<text x="${x + cw / 2}" y="${top - 13}" font-size="19" font-weight="800" fill="#fff" text-anchor="middle">${t}°</text>`;
+    h += `<rect x="${x + 4}" y="${top + 4}" width="${cw - 8}" height="${H - top - 46}" rx="8" fill="#efe6d2"/>`;
+    const icons = pr ? G.farmerIcons(pr.counties[c]) : Array(G.FARMERS[c]).fill("pub");
+    icons.forEach((g, k) => {
+      const cx = x + 20 + (k % 3) * 25, cy = top + 26 + Math.floor(k / 3) * 46;
+      h += `<circle id="f${c}_${k}" cx="${cx}" cy="${cy}" r="11" fill="${g === "pub" ? "#bdbdbd" : G.COLORS[g - 1]}" stroke="#fff" stroke-width="2"/>`;
+      h += `<rect x="${cx - 7}" y="${cy + 11}" width="14" height="13" rx="2" fill="${g === "pub" ? "#bdbdbd" : G.COLORS[g - 1]}" opacity=".7"/>`;
+    });
+    if (pr) { const b = pr.counties[c].best; if (b) h += `<text x="${x + cw / 2}" y="${H - 26}" font-size="13" text-anchor="middle" fill="#555">${esc(b.name).slice(0, 12)}</text>`; }
+  });
+  h += `<text x="4" y="${H - 1}" font-size="15" fill="#777">${st.phase === "breed" ? `Last harvest shown. This season's seed is grown next summer (temps above).` : `Each figure = a farmer, coloured by whose seed they bought. Grey = old public variety.`}</text></svg>`;
+  return h;
+}
+
+function board(st) {
+  const s = G.standings(S), rows = Object.entries(s.total).sort((a, b) => b[1] - a[1]);
+  const mx = Math.max(1, ...rows.map((x) => x[1]));
+  const lb = rows.map(([g, v], k) => `<div class="row"><span style="width:28px">${st.phase === "over" && k < 3 ? ["🥇", "🥈", "🥉"][k] : k + 1}</span>
+    <span class="sw" style="background:${G.COLORS[g - 1]}"></span><span class="nm">${esc(S.teams?.[g]?.name || g)}</span>
+    <span class="bar" style="width:${Math.round(v / mx * 120)}px;background:${G.COLORS[g - 1]}"></span><b>$${v.toFixed(1)}M</b></div>`).join("");
+  const sent = st.phase === "breed" ? `<div class="chips">${Object.keys(S.teams || {}).map((g) => {
+    const done = S.moves?.[st.round]?.[g]; return `<div class="chip" style="background:${G.COLORS[g - 1]};opacity:${done ? 1 : 0.25}">${g}${done ? " ✓" : ""}</div>`; }).join("")}</div>` : "";
+  const top = s.market.slice().sort((a, b) => (s.total[b.g] || 0) - (s.total[a.g] || 0));
+  const pr0 = s.perRound[st.round]; const newest = s.market.filter((v) => v.r === st.round).sort((a, b) => (pr0?.revenue[b.g] || 0) - (pr0?.revenue[a.g] || 0)).slice(0, 6);
+  const mk = st.phase !== "breed" && newest.length ? `<div class="mkt"><b>Top new varieties this season</b>${newest.map((v) => `<div class="vrow">${plantSVG(v.geno, 34)}<span style="color:${G.COLORS[v.g - 1]};font-weight:800">${esc(v.name)}</span><span class="muted">&nbsp;fits ${G.topt(v.geno).toFixed(1)}° · yield ${G.potential(v.geno).toFixed(1)}</span></div>`).join("")}</div>` : "";
+  ui.innerHTML = `<div class="scMain"><div>${farm(st, s)}${sent}</div><div class="lb"><div class="muted" style="font-size:16px;margin-bottom:6px">Total seed sales</div>${lb}${mk}</div></div>`;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+</script>
+</body></html>
