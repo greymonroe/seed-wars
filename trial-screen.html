@@ -101,13 +101,13 @@ function main(st, sd) {
         <div class="offer hd"><span></span><span>Hybrid (company)</span><span>Promised (plots)</span><span>${truth ? "Real" : ""}</span></div>
         ${top.map((o) => { const over = truth && (shares[o.g] || 0) > 0.02 && o.pub[ri] - o.truth[ri] > T.OVERPROMISE;
           return `<div class="offer"><span class="sw" style="background:${T.COLORS[o.g - 1]}"></span><span><b>${esc(o.name)}</b> <span class="muted">${esc(S.teams[o.g]?.name || "")}</span></span>
-          <span>${o.pub[ri].toFixed(1)} (${o.n[ri]})</span><span class="${over ? "bad" : truth ? "good" : ""}">${truth ? o.truth[ri].toFixed(1) + (over ? " ⚠️" : " ✓") : ""}</span></div>`; }).join("") || '<div class="muted">No new hybrid beat the old seed here. Farmers keep it.</div>'}</div>`; }).join("")}</div>`;
+          <span>${o.pub[ri].toFixed(1)} (${o.n[ri]})</span><span class="${over ? "bad" : truth ? "good" : ""}">${truth ? o.truth[ri].toFixed(1) + (over ? " 💸 refund" : " ✓") : ""}</span></div>`; }).join("") || '<div class="muted">No new hybrid beat the old seed here. Farmers keep it.</div>'}</div>`; }).join("")}</div>`;
   } else left = `<div class="muted">No releases this round.</div>`;
   const rows = Object.entries(sd.total).sort((a, b) => b[1] - a[1]), mx = Math.max(1, ...rows.map((x) => x[1]));
   const lb = rows.map(([g, v], k) => `<div class="row"><span style="width:28px">${st.phase === "over" && k < 3 ? ["🥇", "🥈", "🥉"][k] : k + 1}</span>
     <span class="sw" style="background:${T.COLORS[g - 1]}"></span><span class="nm">${esc(S.teams?.[g]?.name || g)}</span>
-    <span class="stars">${stars(sd.trust[g] ?? 1)}</span><b style="margin-left:auto">$${v.toFixed(1)}M</b></div>`).join("");
-  ui.innerHTML = `<div class="scMain"><div>${left}</div><div class="lb"><div class="muted" style="font-size:16px;margin-bottom:6px">Seed sales · ★ = farmer trust</div>${lb}</div></div>`;
+    <b style="margin-left:auto">$${v.toFixed(1)}M</b>${R && R.showTruth && (R.refund[g] || 0) > 0.05 ? ` <span class="bad" style="font-size:14px">💸−${R.refund[g].toFixed(1)}</span>` : ""}</div>`).join("");
+  ui.innerHTML = `<div class="scMain"><div>${left}</div><div class="lb"><div class="muted" style="font-size:16px;margin-bottom:6px">Seed sales (after refunds)</div>${lb}</div></div>`;
 }
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }

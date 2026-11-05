@@ -4,8 +4,8 @@
 // true performance: 2 generalists (decent everywhere) and 4 specialists (great in one kind of place).
 // Each round a company plants 12 trial plots (any hybrid, any region), gets noisy plot yields back,
 // releases one hybrid, and its trial data is published. Farmers in each region choose among released
-// hybrids by their PUBLISHED mean yield for that region (x the company's reputation). Then the true
-// yield comes in: overpromise by more than 1 t/ha and the company's reputation drops.
+// hybrids by their PUBLISHED mean yield for that region. Then the true yield comes in: where it falls more than
+// OVERPROMISE t/ha short of what was published, those farmers get refunds (the company loses that region's sales).
 
 export const REGIONS = [
   { key: "CW", name: "Cool & wet", icon: "❄️💧", T: 22, W: 0.8, farmers: 20 },
@@ -13,6 +13,7 @@ export const REGIONS = [
   { key: "HW", name: "Hot & wet",  icon: "☀️💧", T: 33, W: 0.8, farmers: 20 },
   { key: "HD", name: "Hot & dry",  icon: "☀️🌵", T: 33, W: 0.2, farmers: 25 },
 ];
+export let GPEAK = 10.0; export const setGPeak = (v) => (GPEAK = v);
 export const NHYB = 6, PLOTS = 12, ROUNDS = 3, NOISE = 1.5, POWER = 8, OVERPROMISE = 2.0, CAUTION = 2.0, OLD = 8.0;   // OLD: farmers' current seed, rated 8 t/ha everywhere
 // what farmers go by: the published mean minus its uncertainty (one plot can lie; six plots rarely do)
 export const rating = (mean, n) => mean - CAUTION * NOISE / Math.sqrt(n);
@@ -31,8 +32,8 @@ const gauss = (r) => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.P
 export function catalog(gid, g) {
   const r = rng(`${gid}:cat:${g}`);
   const arche = [
-    { kind: "G", T: 27.5, W: 0.5, sT: 6, sW: 0.7, peak: 10.0 },
-    { kind: "G", T: 27.5, W: 0.5, sT: 6, sW: 0.7, peak: 10.0 },
+    { kind: "G", T: 27.5, W: 0.5, sT: 6, sW: 0.7, peak: GPEAK },
+    { kind: "G", T: 27.5, W: 0.5, sT: 6, sW: 0.7, peak: GPEAK },
     ...REGIONS.map((R) => ({ kind: "S" + R.key, T: R.T, W: R.W, sT: 3.2, sW: 0.32, peak: 12.5 })),
   ];
   const hy = arche.map((a, i) => ({
@@ -71,8 +72,8 @@ export function trialResults(gid, g, r, alloc) {
 // Score the whole game from the database snapshot of trials/<gid>.
 export function standings(gid, snap) {
   const st = snap.state || { phase: "lobby", round: 0 }, teams = snap.teams || {};
-  const trust = {}, total = {}, rounds = {};
-  Object.keys(teams).forEach((g) => { trust[g] = 1; total[g] = 0; });
+  const total = {}, rounds = {};
+  Object.keys(teams).forEach((g) => { total[g] = 0; });
   for (let r = 1; r <= ROUNDS; r++) {
     const done = r < st.round || (r === st.round && ["market", "truth", "over"].includes(st.phase));
     if (!done) break;
@@ -84,11 +85,11 @@ export function standings(gid, snap) {
       for (let k = 1; k <= r; k++) { const p = snap.plots?.[k]?.[g]; if (p) trialResults(gid, g, k, p.alloc)[v.h].forEach((c, ri) => ys[ri].push(...c.ys)); }
       offers.push({ g, h: v.h, name: v.name, code: cat[v.h].code,
         pub: ys.map((a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null)), n: ys.map((a) => a.length),
-        truth: REGIONS.map((R) => trueYield(cat[v.h], R)), trust: trust[g] ?? 1 });
+        truth: REGIONS.map((R) => trueYield(cat[v.h], R)), });
     }
     const regions = REGIONS.map((R, ri) => {
       const cand = offers.filter((o) => o.pub[ri] != null);
-      const w = cand.map((o) => Math.max(0.01, rating(o.pub[ri], o.n[ri]) * o.trust) ** POWER), den = w.reduce((a, b) => a + b, 0) + OLD ** POWER;
+      const w = cand.map((o) => Math.max(0.01, rating(o.pub[ri], o.n[ri])) ** POWER), den = w.reduce((a, b) => a + b, 0) + OLD ** POWER;
       const shares = {};
       cand.forEach((o, i) => (shares[o.g] = den ? w[i] / den : 0));
       return { R, cand, shares };
@@ -100,14 +101,14 @@ export function standings(gid, snap) {
       const o = offers.find((x) => x.g === g);
       if (s > 0.02) promise[g].push({ ri, pub: o.pub[ri], truth: o.truth[ri], over: o.pub[ri] - o.truth[ri] > OVERPROMISE });
     }));
-    const trustBefore = { ...trust };
     const showTruth = r < st.round || (r === st.round && st.phase !== "market");
-    if (showTruth) offers.forEach((o) => {
-      const burned = promise[o.g].some((p) => p.over);
-      trust[o.g] = burned ? Math.max(0.4, trust[o.g] * 0.6) : Math.min(1, trust[o.g] + 0.1);
-    });
+    const sales = { ...revenue }, refund = {};
+    offers.forEach((o) => (refund[o.g] = 0));
+    if (showTruth) offers.forEach((o) => promise[o.g].forEach((p) => {
+      if (p.over) { const lost = REGIONS[p.ri].farmers * regions[p.ri].shares[o.g] * MONEY; refund[o.g] += lost; revenue[o.g] -= lost; }
+    }));
     Object.entries(revenue).forEach(([g, v]) => (total[g] = (total[g] || 0) + v));
-    rounds[r] = { offers, regions, revenue, promise, trustBefore, trustAfter: { ...trust } };
+    rounds[r] = { offers, regions, revenue, sales, refund, promise, showTruth };
   }
-  return { state: st, teams, rounds, total, trust };
+  return { state: st, teams, rounds, total };
 }

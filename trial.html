@@ -48,7 +48,7 @@ function render() {
   clearInterval(timerInt);
   hdr.innerHTML = `<div class="hrow"><h1>🌽 Trial & Release</h1>${myG ? `<span class="money">$${(sd.total[myG] || 0).toFixed(1)}M</span>` : ""}</div>` +
     (myG ? `<div class="team"><span class="sw" style="background:${T.COLORS[myG - 1]}"></span>${esc(S.teams[myG].name)}
-      <span class="stars">${stars(sd.trust[myG] ?? 1)}</span><span class="muted">${st.round ? ` · round ${st.round}/${T.ROUNDS}` : ""}</span><span id="timer" class="timer"></span></div>` : "");
+      <span class="muted">${st.round ? ` · round ${st.round}/${T.ROUNDS}` : ""}</span><span id="timer" class="timer"></span></div>` : "");
   if (st.phase === "trial" && st.endsAt) {
     const tick = () => { const el = document.getElementById("timer"); if (!el) return; const s = Math.max(0, Math.round((st.endsAt - Date.now()) / 1000));
       el.textContent = `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
@@ -68,7 +68,7 @@ function rules() {
     <li>Each round you plant <b>12 trial plots</b>: any hybrid, any of 4 regions. One plot can lie; more plots = surer.</li>
     <li><b>Release one hybrid.</b> Its trial data is published.</li>
     <li>Farmers in each region buy the hybrid with the best data <i>for their region</i>, and they trust well-replicated trials more.</li>
-    <li>Then the real harvest comes in. Overpromise and farmers stop trusting you ★.</li></ol></div>`;
+    <li>Then the real harvest comes in. Where your hybrid yields more than 2 t/ha below what you published, those farmers get <b>refunds</b>.</li></ol></div>`;
 }
 
 function joinView() {
@@ -162,8 +162,9 @@ function resultView(st, sd) {
         return `<div class="pr"><span>${Rg.icon} ${Math.round(sh * Rg.farmers)} farmers</span><span>${pub == null ? "–" : pub.toFixed(1) + ` (${mine.n[ri]})`}</span>
           <span class="${over ? "bad" : st.phase !== "market" && pub != null ? "good" : ""}">${pub == null ? "–" : real}${over ? " ⚠️ overpromised" : ""}</span></div>`; }).join("") + `</div>`;
     if (st.phase !== "market") {
-      const before = R.trustBefore[myG] ?? 1, after = R.trustAfter[myG] ?? 1;
-      h += `<div class="card">Farmer trust: <span class="stars">${stars(after)}</span> ${after < before ? '<span class="bad">dropped: your data promised more than farmers got</span>' : '<span class="good">solid: you delivered</span>'}</div>`;
+      const ref = R.refund[myG] || 0;
+      h += ref > 0.05 ? `<div class="card"><span class="bad">💸 Refunds: −$${ref.toFixed(1)}M.</span> Your data promised more than farmers got. Sales $${R.sales[myG].toFixed(1)}M → kept $${rev.toFixed(1)}M.</div>`
+        : `<div class="card"><span class="good">✓ No refunds: your hybrid delivered what your data promised.</span></div>`;
     }
   }
   h += st.phase === "over" ? `<div class="card"><b>Game over!</b> Final rank ${ranks.indexOf(String(myG)) + 1}. Look at the big screen.</div>` : `<div class="muted">Look at the big screen.</div>`;
