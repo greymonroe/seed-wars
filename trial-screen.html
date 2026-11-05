@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trial & Release · screen</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .regions { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .reg { background: #fff; border-radius: 14px; padding: 10px 14px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  .reg h3 { margin: 0 0 4px; font-size: 22px; } .reg h3 .ic { font-size: 26px; }
+  .farmers { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  .fm { width: 20px; height: 26px; border-radius: 10px 10px 4px 4px; transition: background 1s; }
+  .offer { display: grid; grid-template-columns: 18px 1fr 92px 92px; gap: 8px; align-items: center; font-size: 17px; margin: 2px 0; }
+  .offer .sw { width: 16px; height: 16px; }
+  .bad { color: #c62828; font-weight: 800; } .good { color: #2e7d32; font-weight: 800; }
+  .stars { color: #f9a825; letter-spacing: 1px; }
+  .hd { font-size: 13px; color: #888; }
+</style>
+</head>
+<body class="screen">
+<div class="sc">
+  <div class="scTop"><h1>🌽 Trial & Release</h1><div class="phase" id="phase"></div><div class="clock" id="clock"></div><div class="ctl" id="ctl"></div></div>
+  <div id="ui"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@04f46c6a/qrcode.min.js"></script>
+<script type="module">
+import { db, tbase as base, gameId, ready, amHost, signInAsHost } from "./app.js";
+import { ref, onValue, set, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import * as T from "./trial.js";
+
+const ui = document.getElementById("ui"), ctl = document.getElementById("ctl");
+const phoneURL = location.origin + location.pathname.replace(/trial-screen\.html$/, "trial.html") + "?g=" + gameId;
+const SEASON = 300;
+let S = {}, host = false, clockInt = null;
+(async () => { await ready; host = await amHost(); onValue(ref(db, base), (snap) => { S = snap.val() || {}; render(); }); })();
+const setState = (st) => set(ref(db, `${base}/state`), st);
+const stars = (t) => "★".repeat(Math.round(t * 5)) + "☆".repeat(5 - Math.round(t * 5));
+
+function controls(st) {
+  if (!host) { ctl.innerHTML = `<button class="ghost" id="si">Sign in as host</button>`;
+    document.getElementById("si").onclick = async () => { host = await signInAsHost(); if (!host) alert("This Google account isn't the live-poll host."); render(); }; return; }
+  const r = st.round, steps = {
+    lobby: ["Start round 1", { phase: "trial", round: 1, rkey: "1", endsAt: Date.now() + SEASON * 1000 }],
+    trial: ["Farmers choose 🧑‍🌾", { phase: "market", round: r, rkey: String(r) }],
+    market: ["Reveal the harvest 🌽", { phase: "truth", round: r, rkey: String(r) }],
+    truth: r < T.ROUNDS ? [`Start round ${r + 1}`, { phase: "trial", round: r + 1, rkey: String(r + 1), endsAt: Date.now() + SEASON * 1000 }] : ["Final results 🏆", { phase: "over", round: r, rkey: String(r) }],
+  }[st.phase];
+  ctl.innerHTML = (steps ? `<button id="go">${steps[0]}</button>` : "") + `<button class="ghost" id="reset">Reset</button>`;
+  if (steps) document.getElementById("go").onclick = () => {
+    const nx = { ...steps[1] }; if (nx.endsAt) nx.endsAt = Date.now() + SEASON * 1000; setState(nx); };
+  document.getElementById("reset").onclick = () => { if (confirm("Wipe this game?")) remove(ref(db, base)); };
+}
+
+function render() {
+  const st = S.state || { phase: "lobby", round: 0 }, sd = T.standings(gameId, S);
+  controls(st); clearInterval(clockInt); document.getElementById("clock").textContent = "";
+  const ph = document.getElementById("phase"), nT = Object.keys(S.teams || {}).length;
+  if (st.phase === "lobby") { ph.textContent = `${nT} companies`; return lobby(); }
+  const label = { trial: "trial season", market: "farmers choose", truth: "the real harvest", over: "final results" }[st.phase];
+  ph.textContent = `Round ${st.round} of ${T.ROUNDS} · ${label}`;
+  if (st.phase === "trial") {
+    const tick = () => { const s = Math.max(0, Math.round((st.endsAt - Date.now()) / 1000)); document.getElementById("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    tick(); clockInt = setInterval(tick, 1000);
+  }
+  main(st, sd);
+}
+
+function lobby() {
+  ui.innerHTML = `<div class="lobby"><div class="qr" id="qr"></div><div style="font-size:28px;line-height:1.45">
+    <b>Your group is a seed company with 6 secret hybrids.</b><br>Test them in the field, release the best one, and win the farmers.<br>
+    One phone per group: scan, tap your group number.<div class="muted" style="font-size:18px;margin-top:6px">${phoneURL.replace(/^https?:\/\//, "")}</div>
+    <div class="chips">${Object.entries(S.teams || {}).map(([g, t]) => `<div class="chip" style="background:${T.COLORS[g - 1]}">${g} · ${esc(t.name)}</div>`).join("")}</div></div></div>`;
+  const s = Math.round(Math.min(innerHeight * 0.6, innerWidth * 0.32));
+  new QRCode(document.getElementById("qr"), { text: phoneURL, width: s, height: s, correctLevel: QRCode.CorrectLevel.M });
+}
+
+function icons(shares, farmers) {
+  const parts = Object.entries(shares).map(([g, s]) => [g, s * farmers]);
+  const tot = parts.reduce((a, b) => a + b[1], 0); parts.push(["old", Math.max(0, farmers - tot)]);
+  const b = parts.map(([g, x]) => [g, Math.floor(x), x - Math.floor(x)]);
+  let left = farmers - b.reduce((a, x) => a + x[1], 0); b.sort((a, x) => x[2] - a[2]).forEach((x) => { if (left > 0) { x[1]++; left--; } });
+  return b.sort((a, x) => (a[0] === "old") - (x[0] === "old") || x[1] - a[1]).flatMap(([g, k]) => Array(k).fill(g));
+}
+
+function main(st, sd) {
+  const r = st.round, R = sd.rounds[r];
+  let left;
+  if (st.phase === "trial") {
+    left = `<div class="regions">${T.REGIONS.map((Rg) => `<div class="reg"><h3><span class="ic">${Rg.icon}</span> ${Rg.name}</h3>
+      <div class="farmers">${Array(Rg.farmers).fill('<div class="fm" style="background:#bdbdbd"></div>').join("")}</div>
+      <div class="muted">${Rg.farmers} farmers, growing their old seed (8 t/ha). Waiting for new hybrids…</div></div>`).join("")}</div>
+      <div class="chips">${Object.keys(S.teams || {}).map((g) => { const p = S.plots?.[r]?.[g], rl = S.release?.[r]?.[g];
+        return `<div class="chip" style="background:${T.COLORS[g - 1]};opacity:${rl ? 1 : p ? 0.6 : 0.2}">${g}${p ? " 🌱" : ""}${rl ? " 📣" : ""}</div>`; }).join("")}</div>
+      <div class="muted" style="margin-top:6px">🌱 = trials planted · 📣 = hybrid released</div>`;
+  } else if (R) {
+    const truth = st.phase !== "market";
+    left = `<div class="regions">${R.regions.map(({ R: Rg, cand, shares }, ri) => {
+      const top = cand.filter((o) => (shares[o.g] || 0) > 0.01).sort((a, b) => (shares[b.g] || 0) - (shares[a.g] || 0)).slice(0, 4);
+      return `<div class="reg"><h3><span class="ic">${Rg.icon}</span> ${Rg.name}</h3>
+        <div class="farmers">${icons(shares, Rg.farmers).map((g) => `<div class="fm" style="background:${g === "old" ? "#bdbdbd" : T.COLORS[g - 1]}"></div>`).join("")}</div>
+        <div class="offer hd"><span></span><span>Hybrid (company)</span><span>Promised (plots)</span><span>${truth ? "Real" : ""}</span></div>
+        ${top.map((o) => { const over = truth && (shares[o.g] || 0) > 0.02 && o.pub[ri] - o.truth[ri] > T.OVERPROMISE;
+          return `<div class="offer"><span class="sw" style="background:${T.COLORS[o.g - 1]}"></span><span><b>${esc(o.name)}</b> <span class="muted">${esc(S.teams[o.g]?.name || "")}</span></span>
+          <span>${o.pub[ri].toFixed(1)} (${o.n[ri]})</span><span class="${over ? "bad" : truth ? "good" : ""}">${truth ? o.truth[ri].toFixed(1) + (over ? " ⚠️" : " ✓") : ""}</span></div>`; }).join("") || '<div class="muted">No new hybrid beat the old seed here. Farmers keep it.</div>'}</div>`; }).join("")}</div>`;
+  } else left = `<div class="muted">No releases this round.</div>`;
+  const rows = Object.entries(sd.total).sort((a, b) => b[1] - a[1]), mx = Math.max(1, ...rows.map((x) => x[1]));
+  const lb = rows.map(([g, v], k) => `<div class="row"><span style="width:28px">${st.phase === "over" && k < 3 ? ["🥇", "🥈", "🥉"][k] : k + 1}</span>
+    <span class="sw" style="background:${T.COLORS[g - 1]}"></span><span class="nm">${esc(S.teams?.[g]?.name || g)}</span>
+    <span class="stars">${stars(sd.trust[g] ?? 1)}</span><b style="margin-left:auto">$${v.toFixed(1)}M</b></div>`).join("");
+  ui.innerHTML = `<div class="scMain"><div>${left}</div><div class="lb"><div class="muted" style="font-size:16px;margin-bottom:6px">Seed sales · ★ = farmer trust</div>${lb}</div></div>`;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+</script>
+</body></html>

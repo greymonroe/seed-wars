@@ -33,3 +33,23 @@ The rules are in the `seedwars` block of `~/repos/live-poll-test/database.rules.
 
 ## Testing
 `node test/bots.mjs <game-id> setup|open <r>|bots <r>|harvest <r>` drives a game with 12 bot companies through the REST API, using the gcloud admin login.
+
+---
+
+# Trial & Release (`trial.html`, `trial-screen.html`, `trial.js`)
+
+No genetics. Each company owns 6 secret hybrids: 2 generalists and 4 specialists, one for each of 4 regions (cool/wet, cool/dry, hot/wet, hot/dry).
+
+**Each round:**
+- Plant 12 trial plots, any hybrid in any region. Plot noise has an sd of 1.5 t/ha.
+- Release one hybrid. All of its trial plots so far are published.
+- Farmers in each region rate the published data as mean − 2×SE, times the company's trust. They split purchases by rating^8, against their old seed rated 8 t/ha.
+- The true harvest comes in. Overpromising by more than 2 t/ha in a region where you sold costs trust (×0.6).
+- 3 rounds.
+
+**Balance:** `node test/trialsim.mjs` (200 bot games). Screening widely and then replicating your best hybrids in your target regions wins at about $19M. Single plots of everything everywhere comes in around $13M and takes most of the trust hits.
+
+- **Phones:** `https://greymonroe.github.io/seed-wars/trial.html?g=<game-id>`
+- **Projector:** `https://greymonroe.github.io/seed-wars/trial-screen.html?g=<game-id>`. Sign in as host.
+- **Data:** `trials/<game-id>/` (state, teams, plots, release). Rules are in the `trials` block of live-poll-test `database.rules.json`.
+- **Testing:** `node test/tbots.mjs <gid> setup | trial <r> | bots <r> | market <r> | truth <r>`.

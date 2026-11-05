@@ -17,6 +17,7 @@ export const auth = getAuth(app);
 export const gameId = (new URLSearchParams(location.search).get("g") || "pls152-2026-11-05")
   .toLowerCase().replace(/[^a-z0-9-]/g, "");
 export const base = `seedwars/${gameId}`;
+export const tbase = `trials/${gameId}`;
 
 export const ready = new Promise((resolve) => {
   let settled = false;

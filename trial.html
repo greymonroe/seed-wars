@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Trial & Release</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  table.tg { width: 100%; border-collapse: separate; border-spacing: 3px; margin-top: 6px; }
+  .tg th { font-size: 12px; font-weight: 700; color: #555; }
+  .tg th .ic { font-size: 18px; display: block; }
+  .tg td.hy { font-weight: 800; font-size: 13px; white-space: nowrap; }
+  .tg td.c { height: 52px; border-radius: 10px; background: #f1efe8; text-align: center; font-size: 14px; cursor: pointer; user-select: none; }
+  .tg td.c.on { background: #c8e6c9; font-weight: 800; font-size: 20px; }
+  .tg td.r { height: 56px; border-radius: 10px; text-align: center; font-size: 15px; line-height: 1.15; color: #222; }
+  .tg td.r small { display: block; font-size: 10px; color: #555; }
+  .tg tr.pick td.hy { color: #00897b; } .tg tr.pick td.r { outline: 3px solid #00897b; }
+  .left { font-size: 18px; font-weight: 800; } .row2 { display: flex; gap: 8px; align-items: center; }
+  .row2 button { flex: 1; }
+  .pr { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; font-size: 15px; margin: 4px 0; }
+  .bad { color: #c62828; font-weight: 800; } .good { color: #2e7d32; font-weight: 800; }
+  .stars { color: #f9a825; font-size: 18px; letter-spacing: 1px; }
+</style>
+</head>
+<body class="phone">
+<div class="wrap">
+  <header id="hdr"><h1>🌽 Trial & Release</h1></header>
+  <main id="ui"><p class="muted">Connecting…</p></main>
+</div>
+<script type="module">
+import { db, tbase as base, gameId, ready } from "./app.js";
+import { ref, onValue, set, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import * as T from "./trial.js";
+
+const ui = document.getElementById("ui"), hdr = document.getElementById("hdr");
+let user = null, S = {}, myG = null, draft = null, pick = null, key = "", timerInt = null;
+
+(async () => {
+  user = await ready;
+  if (!user) { ui.innerHTML = '<p class="err">Could not connect. Reload.</p>'; return; }
+  onValue(ref(db, base), (snap) => { S = snap.val() || {}; render(); });
+})();
+
+const stars = (t) => "★".repeat(Math.round(t * 5)) + "☆".repeat(5 - Math.round(t * 5));
+function render() {
+  myG = Object.entries(S.teams || {}).find(([, t]) => t.uid === user.uid)?.[0];
+  const st = S.state || { phase: "lobby", round: 0 }, sd = T.standings(gameId, S);
+  clearInterval(timerInt);
+  hdr.innerHTML = `<div class="hrow"><h1>🌽 Trial & Release</h1>${myG ? `<span class="money">$${(sd.total[myG] || 0).toFixed(1)}M</span>` : ""}</div>` +
+    (myG ? `<div class="team"><span class="sw" style="background:${T.COLORS[myG - 1]}"></span>${esc(S.teams[myG].name)}
+      <span class="stars">${stars(sd.trust[myG] ?? 1)}</span><span class="muted">${st.round ? ` · round ${st.round}/${T.ROUNDS}` : ""}</span><span id="timer" class="timer"></span></div>` : "");
+  if (st.phase === "trial" && st.endsAt) {
+    const tick = () => { const el = document.getElementById("timer"); if (!el) return; const s = Math.max(0, Math.round((st.endsAt - Date.now()) / 1000));
+      el.textContent = `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    tick(); timerInt = setInterval(tick, 1000);
+  }
+  if (!myG) return joinView();
+  const k = `${st.phase}:${st.round}`;
+  if (st.phase === "trial") { if (k !== key) { key = k; draft = null; pick = S.release?.[st.round]?.[myG]?.h ?? null; } return trialView(st.round); }
+  key = k;
+  if (st.phase === "market" || st.phase === "truth" || st.phase === "over") return resultView(st, sd);
+  ui.innerHTML = `<div class="card">You're <b>${esc(S.teams[myG].name)}</b>. Waiting for round 1…</div>` + rules();
+}
+
+function rules() {
+  return `<div class="card rules"><b>How it works</b><ol>
+    <li>Your company owns <b>6 secret hybrids</b>. Nobody knows how they do where.</li>
+    <li>Each round you plant <b>12 trial plots</b>: any hybrid, any of 4 regions. One plot can lie; more plots = surer.</li>
+    <li><b>Release one hybrid.</b> Its trial data is published.</li>
+    <li>Farmers in each region buy the hybrid with the best data <i>for their region</i>, and they trust well-replicated trials more.</li>
+    <li>Then the real harvest comes in. Overpromise and farmers stop trusting you ★.</li></ol></div>`;
+}
+
+function joinView() {
+  const taken = S.teams || {};
+  ui.innerHTML = `<div class="card"><b>Your final project group number</b><div class="muted">One phone per group.</div></div>
+    <div class="grid">${Array.from({ length: 17 }, (_, i) => i + 1).map((g) => `<button class="gbtn" data-g="${g}" style="background:${T.COLORS[g - 1]}" ${taken[g] ? "disabled" : ""}>${g}</button>`).join("")}</div>
+    <div id="nameBox" class="card hide"><b>Name your seed company</b><input id="cname" maxlength="24" placeholder="e.g. Husk & Co.">
+    <button class="big" id="claim">Start my company</button><div id="msg" class="err"></div></div>` + rules();
+  let g0 = null;
+  ui.querySelectorAll(".gbtn").forEach((b) => b.onclick = () => { g0 = +b.dataset.g; ui.querySelectorAll(".gbtn").forEach((x) => x.classList.toggle("sel", x === b));
+    document.getElementById("nameBox").classList.remove("hide"); });
+  document.getElementById("claim").onclick = async () => {
+    const name = (document.getElementById("cname").value.trim() || `Company ${g0}`).slice(0, 24);
+    try { await set(ref(db, `${base}/teams/${g0}`), { name, uid: user.uid, ts: serverTimestamp() }); }
+    catch (e) { document.getElementById("msg").textContent = "That number was just taken. Pick your own group."; }
+  };
+}
+
+const head = () => `<tr><th></th>${T.REGIONS.map((R) => `<th><span class="ic">${R.icon}</span>${R.name}<br><span class="muted">${R.farmers} farmers</span></th>`).join("")}</tr>`;
+// colour a yield: low = pale, high = deep green
+const ycol = (y) => `hsl(${Math.max(0, Math.min(120, (y - 4) * 13))}, 60%, ${88 - Math.max(0, Math.min(40, (y - 4) * 4))}%)`;
+
+function trialView(r) {
+  const planted = S.plots?.[r]?.[myG], cat = T.catalog(gameId, myG);
+  if (!planted) {
+    if (!draft) { try { draft = JSON.parse(localStorage.getItem(`tr:${gameId}:${r}`)); } catch (e) {} }
+    if (!Array.isArray(draft) || draft.length !== T.NHYB * 4) draft = Array(T.NHYB * 4).fill(0);
+    try { localStorage.setItem(`tr:${gameId}:${r}`, JSON.stringify(draft)); } catch (e) {}
+    const used = draft.reduce((a, b) => a + b, 0);
+    ui.innerHTML = `<div class="card"><b>Round ${r}: plant your trials</b><div class="muted small">Tap a square to add a plot there (tap again for more). ${T.PLOTS} plots per round.</div>
+      <table class="tg">${head()}${cat.map((h, i) => `<tr><td class="hy">${h.code}</td>${T.REGIONS.map((R, ri) => {
+        const n = draft[i * 4 + ri]; return `<td class="c ${n ? "on" : ""}" data-c="${i * 4 + ri}">${n ? "🌱".repeat(Math.min(n, 3)) + (n > 3 ? n : "") : ""}</td>`; }).join("")}</tr>`).join("")}</table>
+      <div class="row2" style="margin-top:8px"><span class="left">${T.PLOTS - used} plots left</span><button class="ghost big" id="clr" style="margin:0">Clear</button></div>
+      <button class="big" id="plant" ${used ? "" : "disabled"}>Plant ${used} plot${used === 1 ? "" : "s"} and harvest 🌱</button></div>` +
+      (r > 1 ? pastData(r) : "");
+    ui.querySelectorAll("td.c").forEach((td) => td.onclick = () => {
+      const c = +td.dataset.c; if (draft.reduce((a, b) => a + b, 0) < T.PLOTS && draft[c] < 9) draft[c]++; else draft[c] = 0; trialView(r); });
+    document.getElementById("clr").onclick = () => { draft = Array(T.NHYB * 4).fill(0); trialView(r); };
+    document.getElementById("plant").onclick = async () => {
+      if (!confirm(`Plant ${draft.reduce((a, b) => a + b, 0)} plots? You can't change them this round.`)) return;
+      try { await set(ref(db, `${base}/plots/${r}/${myG}`), { alloc: draft.join(""), ts: serverTimestamp() }); }
+      catch (e) { alert("The trial season is closed."); }
+    };
+    return;
+  }
+  const res = T.trialResults(gameId, myG, r, planted.alloc), rel = S.release?.[r]?.[myG];
+  ui.innerHTML = `<div class="card"><b>Round ${r}: your trial results</b><div class="muted small">Average yield (t/ha) and number of plots. Tap a hybrid's row to release it. Its row is what gets published.</div>
+    <table class="tg">${head()}${cat.map((h, i) => `<tr class="${pick === i ? "pick" : ""}" data-h="${i}"><td class="hy">${h.code}</td>${res[i].map((c) =>
+      c.n ? `<td class="r" style="background:${ycol(c.mean)}"><b>${c.mean.toFixed(1)}</b><small>${c.n} plot${c.n > 1 ? "s" : ""}: ${c.ys.map((y) => y.toFixed(0)).join(", ")}</small></td>` : `<td class="r" style="background:#f6f6f6"><small>no data</small></td>`).join("")}</tr>`).join("")}</table></div>
+    <div class="card"><b>Release</b> ${pick == null ? '<span class="muted">tap a row above</span>' : `<b style="color:#00897b">${cat[pick].code}</b>`}
+    ${pick != null ? (() => { const all = pooled(r, pick); return `<div class="muted small">Published data = every plot you've ever run of it (this round + earlier). Farmers rate it as average minus uncertainty: ${T.REGIONS.map((R, ri) => all[ri].length ?
+      `${R.icon} ${T.rating(all[ri].reduce((a, b) => a + b, 0) / all[ri].length, all[ri].length).toFixed(1)} (${all[ri].length})` : `${R.icon} –`).join(" · ")}. Their current seed rates 8.0.</div>`; })() : ""}
+    <input id="vname" maxlength="24" placeholder="Brand name (e.g. Drought Buster)" value="${esc(rel?.name || "")}">
+    <button class="big" id="rel" ${pick == null ? "disabled" : ""}>Release and publish data 📣</button>
+    <div class="ok">${rel ? `Released: ${esc(rel.name)} (${cat[rel.h].code}). You can switch until the round ends.` : ""}</div></div>`;
+  ui.querySelectorAll("tr[data-h]").forEach((tr) => tr.onclick = () => { pick = +tr.dataset.h; trialView(r); });
+  document.getElementById("rel").onclick = async () => {
+    const name = (document.getElementById("vname").value.trim() || cat[pick].code).slice(0, 24);
+    try { await set(ref(db, `${base}/release/${r}/${myG}`), { h: pick, name, ts: serverTimestamp() }); } catch (e) { alert("The round is closed."); }
+  };
+}
+
+function pooled(r, h) {
+  const ys = T.REGIONS.map(() => []);
+  for (let k = 1; k <= r; k++) { const p = S.plots?.[k]?.[myG]; if (p) T.trialResults(gameId, myG, k, p.alloc)[h].forEach((c, ri) => ys[ri].push(...c.ys)); }
+  return ys;
+}
+
+// earlier rounds' data for this company (same hybrids, so it adds up)
+function pastData(r) {
+  const cat = T.catalog(gameId, myG), sum = cat.map(() => T.REGIONS.map(() => []));
+  for (let k = 1; k < r; k++) { const p = S.plots?.[k]?.[myG]; if (!p) continue;
+    T.trialResults(gameId, myG, k, p.alloc).forEach((row, i) => row.forEach((c, ri) => sum[i][ri].push(...c.ys))); }
+  return `<div class="card"><b>Your notebook: all earlier trial plots</b><table class="tg">${head()}${cat.map((h, i) => `<tr><td class="hy">${h.code}</td>${sum[i].map((ys) =>
+    ys.length ? `<td class="r" style="background:${ycol(ys.reduce((a, b) => a + b, 0) / ys.length)}"><b>${(ys.reduce((a, b) => a + b, 0) / ys.length).toFixed(1)}</b><small>${ys.length} plot${ys.length > 1 ? "s" : ""}</small></td>`
+    : `<td class="r" style="background:#f6f6f6"><small>–</small></td>`).join("")}</tr>`).join("")}</table></div>`;
+}
+
+function resultView(st, sd) {
+  const r = st.round, R = sd.rounds[r], ranks = Object.entries(sd.total).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
+  if (!R) { ui.innerHTML = `<div class="card">Round ${r}: farmers are choosing…</div>`; return; }
+  const mine = R.offers.find((o) => o.g == myG), rev = R.revenue[myG] || 0;
+  let h = `<div class="card big-num"><div class="muted">Round ${r}: ${st.phase === "market" ? "farmers chose" : "harvest"}</div><div class="num">$${rev.toFixed(1)}M</div>
+    <div>${rev.toFixed(0)} of 80 farmers bought ${mine ? `<b>${esc(mine.name)}</b>` : "nothing from you"} · rank <b>${ranks.indexOf(String(myG)) + 1}</b> of ${ranks.length}</div></div>`;
+  if (mine) {
+    h += `<div class="card"><b>Promised vs real</b><div class="pr muted small"><span>Region</span><span>Your data</span><span>${st.phase === "market" ? "Real yield" : "Real yield"}</span></div>` +
+      T.REGIONS.map((Rg, ri) => {
+        const sh = R.regions[ri].shares[myG] || 0, pub = mine.pub[ri];
+        const real = st.phase === "market" ? "❓" : mine.truth[ri].toFixed(1);
+        const over = st.phase !== "market" && pub != null && sh > 0.02 && pub - mine.truth[ri] > T.OVERPROMISE;
+        return `<div class="pr"><span>${Rg.icon} ${Math.round(sh * Rg.farmers)} farmers</span><span>${pub == null ? "–" : pub.toFixed(1) + ` (${mine.n[ri]})`}</span>
+          <span class="${over ? "bad" : st.phase !== "market" && pub != null ? "good" : ""}">${pub == null ? "–" : real}${over ? " ⚠️ overpromised" : ""}</span></div>`; }).join("") + `</div>`;
+    if (st.phase !== "market") {
+      const before = R.trustBefore[myG] ?? 1, after = R.trustAfter[myG] ?? 1;
+      h += `<div class="card">Farmer trust: <span class="stars">${stars(after)}</span> ${after < before ? '<span class="bad">dropped: your data promised more than farmers got</span>' : '<span class="good">solid: you delivered</span>'}</div>`;
+    }
+  }
+  h += st.phase === "over" ? `<div class="card"><b>Game over!</b> Final rank ${ranks.indexOf(String(myG)) + 1}. Look at the big screen.</div>` : `<div class="muted">Look at the big screen.</div>`;
+  ui.innerHTML = h;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+</script>
+</body></html>
