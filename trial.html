@@ -67,7 +67,7 @@ function rules() {
     <li>Your company owns <b>6 secret hybrids</b>. Nobody knows how they do where.</li>
     <li>Each round you plant <b>12 trial plots</b>: any hybrid, any of 4 regions. One plot can lie; more plots = surer.</li>
     <li><b>Release one hybrid.</b> Its trial data is published.</li>
-    <li>Farmers in each region buy the hybrid with the best data <i>for their region</i>, and they trust well-replicated trials more.</li>
+    <li>Farmers in each region buy the hybrid with the best data. They trust data <i>from their own region</i> and well-replicated trials most, but if you didn't test there they'll go by your overall average.</li>
     <li>Then the real harvest comes in. Where your hybrid yields more than 2 t/ha below what you published, those farmers get <b>refunds</b>.</li></ol></div>`;
 }
 
@@ -98,7 +98,7 @@ function trialView(r) {
     if (!Array.isArray(draft) || draft.length !== T.NHYB * 4) draft = Array(T.NHYB * 4).fill(0);
     try { localStorage.setItem(`tr:${gameId}:${r}`, JSON.stringify(draft)); } catch (e) {}
     const used = draft.reduce((a, b) => a + b, 0);
-    ui.innerHTML = `<div class="card"><b>Round ${r}: plant your trials</b><div class="muted small">Tap a square to add a plot there (tap again for more). ${T.PLOTS} plots per round.</div>
+    ui.innerHTML = `<div class="card"><b>Round ${r}: plant your trials</b><div class="muted small">Tap a square to add a plot there (tap again for more). ${T.PLOTS} plots per round. 👀 The big screen shows where rival companies are planting.</div>
       <table class="tg">${head()}${cat.map((h, i) => `<tr><td class="hy">${h.code}</td>${T.REGIONS.map((R, ri) => {
         const n = draft[i * 4 + ri]; return `<td class="c ${n ? "on" : ""}" data-c="${i * 4 + ri}">${n ? "🌱".repeat(Math.min(n, 3)) + (n > 3 ? n : "") : ""}</td>`; }).join("")}</tr>`).join("")}</table>
       <div class="row2" style="margin-top:8px"><span class="left">${T.PLOTS - used} plots left</span><button class="ghost big" id="clr" style="margin:0">Clear</button></div>
@@ -120,7 +120,7 @@ function trialView(r) {
       c.n ? `<td class="r" style="background:${ycol(c.mean)}"><b>${c.mean.toFixed(1)}</b><small>${c.n} plot${c.n > 1 ? "s" : ""}: ${c.ys.map((y) => y.toFixed(0)).join(", ")}</small></td>` : `<td class="r" style="background:#f6f6f6"><small>no data</small></td>`).join("")}</tr>`).join("")}</table></div>
     <div class="card"><b>Release</b> ${pick == null ? '<span class="muted">tap a row above</span>' : `<b style="color:#00897b">${cat[pick].code}</b>`}
     ${pick != null ? (() => { const all = pooled(r, pick); return `<div class="muted small">Published data = every plot you've ever run of it (this round + earlier). Farmers rate it as average minus uncertainty: ${T.REGIONS.map((R, ri) => all[ri].length ?
-      `${R.icon} ${T.rating(all[ri].reduce((a, b) => a + b, 0) / all[ri].length, all[ri].length).toFixed(1)} (${all[ri].length})` : `${R.icon} –`).join(" · ")}. Their current seed rates 8.0.</div>`; })() : ""}
+      `${R.icon} ${T.rating(all[ri].reduce((a, b) => a + b, 0) / all[ri].length, all[ri].length).toFixed(1)} (${all[ri].length})` : `${R.icon} –`).join(" · ")}. Regions you didn't test see your overall average minus 5. Their current seed rates 8.0.</div>`; })() : ""}
     <input id="vname" maxlength="24" placeholder="Brand name (e.g. Drought Buster)" value="${esc(rel?.name || "")}">
     <button class="big" id="rel" ${pick == null ? "disabled" : ""}>Release and publish data 📣</button>
     <div class="ok">${rel ? `Released: ${esc(rel.name)} (${cat[rel.h].code}). You can switch until the round ends.` : ""}</div></div>`;
@@ -156,10 +156,10 @@ function resultView(st, sd) {
   if (mine) {
     h += `<div class="card"><b>Promised vs real</b><div class="pr muted small"><span>Region</span><span>Your data</span><span>${st.phase === "market" ? "Real yield" : "Real yield"}</span></div>` +
       T.REGIONS.map((Rg, ri) => {
-        const sh = R.regions[ri].shares[myG] || 0, pub = mine.pub[ri];
+        const sh = R.regions[ri].shares[myG] || 0, sv = R.regions[ri].seen[myG], pub = sv ? sv.m : null;
         const real = st.phase === "market" ? "❓" : mine.truth[ri].toFixed(1);
         const over = st.phase !== "market" && pub != null && sh > 0.02 && pub - mine.truth[ri] > T.OVERPROMISE;
-        return `<div class="pr"><span>${Rg.icon} ${Math.round(sh * Rg.farmers)} farmers</span><span>${pub == null ? "–" : pub.toFixed(1) + ` (${mine.n[ri]})`}</span>
+        return `<div class="pr"><span>${Rg.icon} ${Math.round(sh * Rg.farmers)} farmers</span><span>${pub == null ? "–" : pub.toFixed(1) + ` (${sv.n})` + (sv.local ? "" : " other regions")}</span>
           <span class="${over ? "bad" : st.phase !== "market" && pub != null ? "good" : ""}">${pub == null ? "–" : real}${over ? " ⚠️ overpromised" : ""}</span></div>`; }).join("") + `</div>`;
     if (st.phase !== "market") {
       const ref = R.refund[myG] || 0;

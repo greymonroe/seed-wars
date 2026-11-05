@@ -30,6 +30,6 @@ for (let s = 0; s < 200; s++) {
     }
   }
   const st = T.standings(gid, snap);
-  for (let g = 1; g <= N; g++) { acc[strat[g]].push(st.total[g]); if (st.trust[g] < 1) burned[strat[g]]++; }
+  for (let g = 1; g <= N; g++) { acc[strat[g]].push(st.total[g]); if (Object.values(st.rounds).some((R) => (R.refund[g] || 0) > 0.05)) burned[strat[g]]++; }
 }
-for (const k of names) console.log(k.padEnd(10), "mean $", (acc[k].reduce((a, b) => a + b, 0) / acc[k].length).toFixed(1), "M  ended with reputation hit:", burned[k], "/", acc[k].length);
+for (const k of names) console.log(k.padEnd(10), "mean $", (acc[k].reduce((a, b) => a + b, 0) / acc[k].length).toFixed(1), "M  had a refund:", burned[k], "/", acc[k].length);

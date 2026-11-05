@@ -14,7 +14,7 @@ export const REGIONS = [
   { key: "HD", name: "Hot & dry",  icon: "☀️🌵", T: 33, W: 0.2, farmers: 25 },
 ];
 export let GPEAK = 10.0; export const setGPeak = (v) => (GPEAK = v);
-export const NHYB = 6, PLOTS = 12, ROUNDS = 3, NOISE = 1.5, POWER = 8, OVERPROMISE = 2.0, CAUTION = 2.0, OLD = 8.0;   // OLD: farmers' current seed, rated 8 t/ha everywhere
+export const NHYB = 6, PLOTS = 12, ROUNDS = 3, NOISE = 1.5, POWER = 8, OVERPROMISE = 2.0, CAUTION = 2.0, OLD = 8.0, XPEN = 5.0;   // XPEN: farmers' discount on data from other regions   // OLD: farmers' current seed, rated 8 t/ha everywhere
 // what farmers go by: the published mean minus its uncertainty (one plot can lie; six plots rarely do)
 export const rating = (mean, n) => mean - CAUTION * NOISE / Math.sqrt(n);
 export const MONEY = 1;   // $M per farmer
@@ -85,21 +85,26 @@ export function standings(gid, snap) {
       for (let k = 1; k <= r; k++) { const p = snap.plots?.[k]?.[g]; if (p) trialResults(gid, g, k, p.alloc)[v.h].forEach((c, ri) => ys[ri].push(...c.ys)); }
       offers.push({ g, h: v.h, name: v.name, code: cat[v.h].code,
         pub: ys.map((a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null)), n: ys.map((a) => a.length),
+        all: (() => { const f = ys.flat(); return f.length ? { m: f.reduce((x, y) => x + y, 0) / f.length, n: f.length } : null; })(),
         truth: REGIONS.map((R) => trueYield(cat[v.h], R)), });
     }
+    // what farmers in region ri see for an offer: local data if any, else the overall average (discounted by XPEN)
+    const seen = (o, ri) => o.pub[ri] != null ? { m: o.pub[ri], n: o.n[ri], local: true, score: rating(o.pub[ri], o.n[ri]) }
+      : o.all ? { m: o.all.m, n: o.all.n, local: false, score: rating(o.all.m, o.all.n) - XPEN } : null;
     const regions = REGIONS.map((R, ri) => {
-      const cand = offers.filter((o) => o.pub[ri] != null);
-      const w = cand.map((o) => Math.max(0.01, rating(o.pub[ri], o.n[ri])) ** POWER), den = w.reduce((a, b) => a + b, 0) + OLD ** POWER;
+      const cand = offers.filter((o) => seen(o, ri));
+      const w = cand.map((o) => Math.max(0.01, seen(o, ri).score) ** POWER), den = w.reduce((a, b) => a + b, 0) + OLD ** POWER;
       const shares = {};
-      cand.forEach((o, i) => (shares[o.g] = den ? w[i] / den : 0));
-      return { R, cand, shares };
+      cand.forEach((o, i) => (shares[o.g] = w[i] / den));
+      return { R, cand, shares, seen: Object.fromEntries(cand.map((o) => [o.g, seen(o, ri)])) };
     });
     const revenue = {}, promise = {};
     offers.forEach((o) => { revenue[o.g] = 0; promise[o.g] = []; });
     regions.forEach(({ R, shares }, ri) => Object.entries(shares).forEach(([g, s]) => {
       revenue[g] += R.farmers * s * MONEY;
       const o = offers.find((x) => x.g === g);
-      if (s > 0.02) promise[g].push({ ri, pub: o.pub[ri], truth: o.truth[ri], over: o.pub[ri] - o.truth[ri] > OVERPROMISE });
+      const sv = regions[ri].seen[g];
+      if (s > 0.02) promise[g].push({ ri, pub: sv.m, local: sv.local, truth: o.truth[ri], over: sv.m - o.truth[ri] > OVERPROMISE });
     }));
     const showTruth = r < st.round || (r === st.round && st.phase !== "market");
     const sales = { ...revenue }, refund = {};

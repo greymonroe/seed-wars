@@ -86,9 +86,13 @@ function main(st, sd) {
   const r = st.round, R = sd.rounds[r];
   let left;
   if (st.phase === "trial") {
-    left = `<div class="regions">${T.REGIONS.map((Rg) => `<div class="reg"><h3><span class="ic">${Rg.icon}</span> ${Rg.name}</h3>
+    const intel = T.REGIONS.map(() => ({ plots: 0, cos: new Set() }));
+    Object.entries(S.plots?.[r] || {}).forEach(([g, p]) => { if (!p) return; for (let h = 0; h < T.NHYB; h++) for (let ri = 0; ri < 4; ri++) {
+      const n = T.allocGet(p.alloc, h, ri); if (n) { intel[ri].plots += n; intel[ri].cos.add(g); } } });
+    left = `<div class="regions">${T.REGIONS.map((Rg, ri) => `<div class="reg"><h3><span class="ic">${Rg.icon}</span> ${Rg.name} <span class="muted" style="font-size:16px">· ${Rg.farmers} farmers</span></h3>
       <div class="farmers">${Array(Rg.farmers).fill('<div class="fm" style="background:#bdbdbd"></div>').join("")}</div>
-      <div class="muted">${Rg.farmers} farmers, growing their old seed (8 t/ha). Waiting for new hybrids…</div></div>`).join("")}</div>
+      <div style="font-size:22px;margin-top:4px">🌱 <b>${intel[ri].plots}</b> trial plots · <b>${intel[ri].cos.size}</b> compan${intel[ri].cos.size === 1 ? "y" : "ies"} testing here</div>
+      <div style="display:flex;gap:4px;margin-top:4px">${[...intel[ri].cos].map((g) => `<span class="sw" style="background:${T.COLORS[g - 1]}"></span>`).join("")}</div></div>`).join("")}</div>
       <div class="chips">${Object.entries(S.teams || {}).filter(([, t]) => t).map(([g]) => { const p = S.plots?.[r]?.[g], rl = S.release?.[r]?.[g];
         return `<div class="chip" style="background:${T.COLORS[g - 1]};opacity:${rl ? 1 : p ? 0.6 : 0.2}">${g}${p ? " 🌱" : ""}${rl ? " 📣" : ""}</div>`; }).join("")}</div>
       <div class="muted" style="margin-top:6px">🌱 = trials planted · 📣 = hybrid released</div>`;
@@ -99,9 +103,9 @@ function main(st, sd) {
       return `<div class="reg"><h3><span class="ic">${Rg.icon}</span> ${Rg.name}</h3>
         <div class="farmers">${icons(shares, Rg.farmers).map((g) => `<div class="fm" style="background:${g === "old" ? "#bdbdbd" : T.COLORS[g - 1]}"></div>`).join("")}</div>
         <div class="offer hd"><span></span><span>Hybrid (company)</span><span>Promised (plots)</span><span>${truth ? "Real" : ""}</span></div>
-        ${top.map((o) => { const over = truth && (shares[o.g] || 0) > 0.02 && o.pub[ri] - o.truth[ri] > T.OVERPROMISE;
+        ${top.map((o) => { const sv = R.regions[ri].seen[o.g], over = truth && (shares[o.g] || 0) > 0.02 && sv.m - o.truth[ri] > T.OVERPROMISE;
           return `<div class="offer"><span class="sw" style="background:${T.COLORS[o.g - 1]}"></span><span><b>${esc(o.name)}</b> <span class="muted">${esc(S.teams[o.g]?.name || "")}</span></span>
-          <span>${o.pub[ri].toFixed(1)} (${o.n[ri]})</span><span class="${over ? "bad" : truth ? "good" : ""}">${truth ? o.truth[ri].toFixed(1) + (over ? " 💸 refund" : " ✓") : ""}</span></div>`; }).join("") || '<div class="muted">No new hybrid beat the old seed here. Farmers keep it.</div>'}</div>`; }).join("")}</div>`;
+          <span>${sv.m.toFixed(1)} (${sv.n})${sv.local ? "" : ' <span class="muted" style="font-size:12px">tested elsewhere</span>'}</span><span class="${over ? "bad" : truth ? "good" : ""}">${truth ? o.truth[ri].toFixed(1) + (over ? " 💸 refund" : " ✓") : ""}</span></div>`; }).join("") || '<div class="muted">No new hybrid beat the old seed here. Farmers keep it.</div>'}</div>`; }).join("")}</div>`;
   } else left = `<div class="muted">No releases this round.</div>`;
   const rows = Object.entries(sd.total).sort((a, b) => b[1] - a[1]), mx = Math.max(1, ...rows.map((x) => x[1]));
   const lb = rows.map(([g, v], k) => `<div class="row"><span style="width:28px">${st.phase === "over" && k < 3 ? ["🥇", "🥈", "🥉"][k] : k + 1}</span>

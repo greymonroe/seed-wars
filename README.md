@@ -43,11 +43,12 @@ No genetics. Each company owns 6 secret hybrids: 2 generalists and 4 specialists
 **Each round:**
 - Plant 12 trial plots, any hybrid in any region. Plot noise has an sd of 1.5 t/ha.
 - Release one hybrid. All of its trial plots so far are published.
-- Farmers in each region rate the published data as mean − 2×SE, times the company's trust. They split purchases by rating^8, against their old seed rated 8 t/ha.
-- The true harvest comes in. Overpromising by more than 2 t/ha in a region where you sold costs trust (×0.6).
+- Farmers in each region rate the published data as mean − 2×SE. If the hybrid wasn't tested in their region, they use the overall average minus 5 t/ha. They split purchases by rating^8, against their old seed rated 8 t/ha.
+- The true harvest comes in. If the real yield is more than 2 t/ha below the data farmers went by, those farmers get refunds and the company loses that region's sales.
+- During the trial season, the projector shows live how many plots and companies are in each region. That's competitor intel, so the best region depends on where everyone else goes (`node test/crowding.mjs`).
 - 3 rounds.
 
-**Balance:** `node test/trialsim.mjs` (200 bot games). Screening widely and then replicating your best hybrids in your target regions wins at about $19M. Single plots of everything everywhere comes in around $13M and takes most of the trust hits.
+**Balance:** `node test/trialsim.mjs` (200 bot games) and `node test/classroom.mjs extrap 5 10 8` (300 simulated classes with six student behaviours). There's no dominant strategy, though screen-then-replicate wins most often. Each class averages about 3.5 refunds for single plots and about 5 for genotype × environment flops.
 
 - **Phones:** `https://greymonroe.github.io/seed-wars/trial.html?g=<game-id>`
 - **Projector:** `https://greymonroe.github.io/seed-wars/trial-screen.html?g=<game-id>`. Sign in as host.
