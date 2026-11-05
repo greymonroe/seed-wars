@@ -73,14 +73,14 @@ export function trialResults(gid, g, r, alloc) {
 export function standings(gid, snap) {
   const st = snap.state || { phase: "lobby", round: 0 }, teams = snap.teams || {};
   const total = {}, rounds = {};
-  Object.keys(teams).forEach((g) => { total[g] = 0; });
+  Object.entries(teams).forEach(([g, t]) => { if (t) total[g] = 0; });
   for (let r = 1; r <= ROUNDS; r++) {
     const done = r < st.round || (r === st.round && ["market", "truth", "over"].includes(st.phase));
     if (!done) break;
     const rel = snap.release?.[r] || {}, plots = snap.plots?.[r] || {};
     const offers = [];
     for (const [g, v] of Object.entries(rel)) {
-      if (!plots[g] || v.h == null) continue;
+      if (!v || !plots[g] || v.h == null) continue;
       const cat = catalog(gid, g), ys = REGIONS.map(() => []);
       for (let k = 1; k <= r; k++) { const p = snap.plots?.[k]?.[g]; if (p) trialResults(gid, g, k, p.alloc)[v.h].forEach((c, ri) => ys[ri].push(...c.ys)); }
       offers.push({ g, h: v.h, name: v.name, code: cat[v.h].code,
